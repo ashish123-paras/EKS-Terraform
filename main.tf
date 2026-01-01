@@ -190,7 +190,3 @@ resource "aws_iam_role_policy_attachment" "devopsshack_node_group_registry_polic
 variable "project" {
   default = "devopsshack"
 }
-
-variable "ssh_key_name" {
-  description = "Name of the SSH key pair to use for node group access"
-}
