@@ -2,6 +2,10 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Fetch available AZs dynamically
+data "aws_availability_zones" "available" {}
+
+# VPC
 resource "aws_vpc" "devopsshack_vpc" {
   cidr_block = "10.0.0.0/16"
 
@@ -10,11 +14,12 @@ resource "aws_vpc" "devopsshack_vpc" {
   }
 }
 
+# Subnets across multiple AZs
 resource "aws_subnet" "devopsshack_subnet" {
-  count = 2
+  count                   = 2
   vpc_id                  = aws_vpc.devopsshack_vpc.id
   cidr_block              = cidrsubnet(aws_vpc.devopsshack_vpc.cidr_block, 8, count.index)
-  availability_zone       = element(["us-east-1a", "us-east-1b"], count.index)
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
   map_public_ip_on_launch = true
 
   tags = {
@@ -22,6 +27,7 @@ resource "aws_subnet" "devopsshack_subnet" {
   }
 }
 
+# Internet Gateway
 resource "aws_internet_gateway" "devopsshack_igw" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
@@ -30,6 +36,7 @@ resource "aws_internet_gateway" "devopsshack_igw" {
   }
 }
 
+# Route Table
 resource "aws_route_table" "devopsshack_route_table" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
@@ -43,12 +50,14 @@ resource "aws_route_table" "devopsshack_route_table" {
   }
 }
 
+# Route Table Associations
 resource "aws_route_table_association" "a" {
   count          = 2
   subnet_id      = aws_subnet.devopsshack_subnet[count.index].id
   route_table_id = aws_route_table.devopsshack_route_table.id
 }
 
+# Security Groups
 resource "aws_security_group" "devopsshack_cluster_sg" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
@@ -68,10 +77,10 @@ resource "aws_security_group" "devopsshack_node_sg" {
   vpc_id = aws_vpc.devopsshack_vpc.id
 
   ingress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["YOUR_IP/32"] # restrict SSH to your IP
   }
 
   egress {
@@ -86,6 +95,7 @@ resource "aws_security_group" "devopsshack_node_sg" {
   }
 }
 
+# EKS Cluster
 resource "aws_eks_cluster" "devopsshack" {
   name     = "devopsshack-cluster"
   role_arn = aws_iam_role.devopsshack_cluster_role.arn
@@ -96,6 +106,7 @@ resource "aws_eks_cluster" "devopsshack" {
   }
 }
 
+# EKS Node Group
 resource "aws_eks_node_group" "devopsshack" {
   cluster_name    = aws_eks_cluster.devopsshack.name
   node_group_name = "devopsshack-node-group"
@@ -111,13 +122,14 @@ resource "aws_eks_node_group" "devopsshack" {
   instance_types = ["t2.medium"]
 
   remote_access {
-    ec2_ssh_key = var.ssh_key_name
+    ec2_ssh_key               = var.ssh_key_name
     source_security_group_ids = [aws_security_group.devopsshack_node_sg.id]
   }
 }
 
+# IAM Roles
 resource "aws_iam_role" "devopsshack_cluster_role" {
-  name = "devopsshack-cluster-role"
+  name = "${var.project}-cluster-role"
 
   assume_role_policy = <<EOF
 {
@@ -141,7 +153,7 @@ resource "aws_iam_role_policy_attachment" "devopsshack_cluster_role_policy" {
 }
 
 resource "aws_iam_role" "devopsshack_node_group_role" {
-  name = "devopsshack-node-group-role"
+  name = "${var.project}-node-group-role"
 
   assume_role_policy = <<EOF
 {
@@ -172,4 +184,13 @@ resource "aws_iam_role_policy_attachment" "devopsshack_node_group_cni_policy" {
 resource "aws_iam_role_policy_attachment" "devopsshack_node_group_registry_policy" {
   role       = aws_iam_role.devopsshack_node_group_role.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+# Variables
+variable "project" {
+  default = "devopsshack"
+}
+
+variable "ssh_key_name" {
+  description = "Name of the SSH key pair to use for node group access"
 }
